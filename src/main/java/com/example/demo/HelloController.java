@@ -8,7 +8,7 @@ public class HelloController {
 
     @RequestMapping("/")
     String hello() {
-        return "Hello Azure and Spring Boot!";
+        return "Hello Azure and Spring Boot! (Production)";
     }
 
 }
