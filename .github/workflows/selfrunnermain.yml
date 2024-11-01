@@ -6,7 +6,8 @@ on:
 jobs:
   build:
     runs-on: self-hosted
-    # Specify additional labels if your runner has them, e.g., `self-hosted`, `linux`, `x64`
+    # Optionally, specify labels if your self-hosted runner has them
+    # runs-on: [self-hosted, linux, x64]
 
     steps:
       - name: Checkout Repository
@@ -36,7 +37,7 @@ jobs:
         run: mvn package -DskipTests=true
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v3  # Updated to v3
         with:
           name: spring-boot-app
           path: target/*.jar
