@@ -9,7 +9,7 @@ public class HelloController {
     @RequestMapping("/")
     String hello() {
         System.out.println("This is logs");
-        return "Hello Azure and Spring Boot! (Production) update the content for demo";
+        return "Hello Azure and Spring Boot! (Production) update the content for demo. This Demo is for GH Copilot";
     }
 
 }
