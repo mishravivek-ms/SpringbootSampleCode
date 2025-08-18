@@ -1,0 +1,112 @@
+name: CI/CD - Azure Deploy (secondary)
+
+on:
+  push:
+    branches: [ 'master', 'main' ]
+  workflow_dispatch:
+
+# Secrets required by this workflow (set in repo Settings → Secrets):
+# - AZURE_CLIENT_ID        (for OIDC login, recommended)
+# - AZURE_TENANT_ID        (for OIDC login, recommended)
+# - AZURE_CREDENTIALS      (SDK auth JSON as fallback)
+# - AZURE_STORAGE_CONNECTION_STRING
+# - AZURE_STORAGE_CONTAINER
+# - AZURE_WEBAPP_NAME
+# - AZURE_RESOURCE_GROUP
+# Optional: AZURE_WEBAPP_PLAN, AZURE_LOCATION
+
+jobs:
+  build-and-deploy-azure:
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_WEBAPP_NAME: ${{ secrets.AZURE_WEBAPP_NAME }}
+      AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+      AZURE_WEBAPP_PLAN: ${{ secrets.AZURE_WEBAPP_PLAN }}
+      AZURE_LOCATION: ${{ secrets.AZURE_LOCATION }}
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+      AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build (package) and capture log
+        run: |
+          set -e
+          mvn -B clean package 2>&1 | tee build-devops-azure.log
+
+      - name: Install azure-cli and jq (for fallback)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl apt-transport-https lsb-release gnupg jq || true
+          curl -sL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg || true
+          sudo install -o root -g root -m 644 microsoft.gpg /etc/apt/trusted.gpg.d/ || true
+          CODENAME=$(lsb_release -cs)
+          echo "deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli/ $CODENAME main" | sudo tee /etc/apt/sources.list.d/azure-cli.list
+          sudo apt-get update && sudo apt-get install -y azure-cli || true
+
+      - name: Try OIDC login (azure/login)
+        uses: azure/login@v1
+        continue-on-error: true
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+
+      - name: Manual az login fallback (append to log)
+        run: |
+          echo "\n--- Manual az login fallback (stdout+stderr appended) ---" >> build-devops-azure.log || true
+          if [ -z "$AZURE_CREDENTIALS" ]; then
+            echo "No AZURE_CREDENTIALS secret found; skipping manual login." >> build-devops-azure.log || true
+          else
+            printf '%s' "$AZURE_CREDENTIALS" > /tmp/azure_creds.json
+            clientId=$(jq -r .clientId /tmp/azure_creds.json)
+            clientSecret=$(jq -r .clientSecret /tmp/azure_creds.json)
+            tenantId=$(jq -r .tenantId /tmp/azure_creds.json)
+            az login --service-principal -u "$clientId" -p "$clientSecret" --tenant "$tenantId" 2>&1 | tee -a build-devops-azure.log || true
+            rm -f /tmp/azure_creds.json
+          fi
+
+      - name: Prepare App Service (create RG/plan/webapp if needed)
+        run: |
+          echo "\n--- Prepare App Service ---" >> build-devops-azure.log || true
+          if [ -z "$AZURE_WEBAPP_NAME" ] || [ -z "$AZURE_RESOURCE_GROUP" ]; then
+            echo "AZURE_WEBAPP_NAME and AZURE_RESOURCE_GROUP secrets required for deployment; skipping." >> build-devops-azure.log || true
+            exit 0
+          fi
+          PLAN=$AZURE_WEBAPP_PLAN
+          if [ -z "$PLAN" ]; then PLAN="${AZURE_WEBAPP_NAME}-plan"; fi
+          LOCATION=${AZURE_LOCATION:-eastus}
+          az group create --name "$AZURE_RESOURCE_GROUP" --location "$LOCATION" >> build-devops-azure.log 2>&1 || true
+          az appservice plan show --name "$PLAN" --resource-group "$AZURE_RESOURCE_GROUP" >> build-devops-azure.log 2>&1 || az appservice plan create --name "$PLAN" --resource-group "$AZURE_RESOURCE_GROUP" --is-linux --sku B1 >> build-devops-azure.log 2>&1 || true
+          az webapp show --name "$AZURE_WEBAPP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" >> build-devops-azure.log 2>&1 || az webapp create --resource-group "$AZURE_RESOURCE_GROUP" --plan "$PLAN" --name "$AZURE_WEBAPP_NAME" --runtime "JAVA|17-java17" >> build-devops-azure.log 2>&1 || true
+
+      - name: Deploy JAR to App Service
+        run: |
+          echo "\n--- Deploy JAR ---" >> build-devops-azure.log || true
+          JAR=$(ls target/*.jar 2>/dev/null | head -n1 || true)
+          if [ -z "$JAR" ]; then
+            echo "Jar not found; skipping deploy." >> build-devops-azure.log || true
+          else
+            az webapp deploy --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_NAME" --src-path "$JAR" --type jar --restart true >> build-devops-azure.log 2>&1 || true
+          fi
+
+      - name: Upload pipeline log to Azure Blob (always)
+        if: always()
+        run: |
+          echo "\n--- Uploading build-devops-azure.log to Azure Blob ---" >> build-devops-azure.log || true
+          if [ -z "$AZURE_STORAGE_CONNECTION_STRING" ] || [ -z "$AZURE_STORAGE_CONTAINER" ]; then
+            echo "Storage secrets not set; skipping upload." >> build-devops-azure.log || true
+            exit 0
+          fi
+          az storage container create --name "$AZURE_STORAGE_CONTAINER" --connection-string "$AZURE_STORAGE_CONNECTION_STRING" >> build-devops-azure.log 2>&1 || true
+          az storage blob upload --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --container-name "$AZURE_STORAGE_CONTAINER" --name "secondary-logs/${{ github.run_id }}/build-devops-azure.log" --file build-devops-azure.log --overwrite >> build-devops-azure.log 2>&1 || true
