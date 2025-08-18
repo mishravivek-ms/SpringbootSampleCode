@@ -1,23 +1,20 @@
-name: CI/CD - Build, Deploy, Upload Log to Azure
+name: CI/CD - Build, Test, Upload Log to Azure
 
 on:
   push:
     branches: [ 'master', 'main' ]
+  pull_request:
+    branches: [ 'master', 'main' ]
   workflow_dispatch:
 
-# Required secrets:
-# - AZURE_CLIENT_ID (for OIDC login)
-# - AZURE_TENANT_ID (for OIDC login)
-# - AZURE_CREDENTIALS (service principal SDK auth JSON)  -- fallback
-# - AZURE_STORAGE_CONNECTION_STRING
-# - AZURE_STORAGE_CONTAINER
-# - AZURE_WEBAPP_NAME
-# - AZURE_RESOURCE_GROUP
-# Optional: AZURE_WEBAPP_PLAN, AZURE_LOCATION
+env:
+  # Optional default. You can also set this directly in repository Secrets.
+  AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
 
 jobs:
-  build-deploy:
+  build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,67 +26,48 @@ jobs:
           java-version: '17'
           cache: maven
 
-      - name: Build and test (capture log)
-        run: |
-          set -e
-          mvn -B clean verify 2>&1 | tee build-devops.log
-
-      - name: Try OIDC login (azure/login)
-        uses: azure/login@v1
-        continue-on-error: true
+      - name: Cache Maven repository
+        uses: actions/cache@v4
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
 
-      - name: Manual az login fallback (append output to log)
+      - name: Build and test (capture log)
+        # The log will be created as `build-devops.log` in the workspace
         run: |
-          set -e
-          echo "\n--- Manual az login attempt (stdout+stderr appended) ---" >> build-devops.log || true
-          if [ -z "${{ secrets.AZURE_CREDENTIALS }}" ]; then
-            echo "No AZURE_CREDENTIALS secret found; skipping manual login." >> build-devops.log || true
-          else
-            printf '%s' "${{ secrets.AZURE_CREDENTIALS }}" > /tmp/azure_creds.json
-            clientId=$(jq -r .clientId /tmp/azure_creds.json)
-            clientSecret=$(jq -r .clientSecret /tmp/azure_creds.json)
-            tenantId=$(jq -r .tenantId /tmp/azure_creds.json)
-            az login --service-principal -u "$clientId" -p "$clientSecret" --tenant "$tenantId" 2>&1 | tee -a build-devops.log || true
-            rm -f /tmp/azure_creds.json
-          fi
+          mvn -B clean verify | tee build-devops.log
 
-      - name: Prepare App Service
+      - name: Upload build log as artifact (optional)
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-devops-log
+          path: build-devops.log
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Ensure Azure Blob container exists
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
         run: |
-          set -e
-          echo "\n--- Prepare App Service ---" >> build-devops.log || true
-          if [ -z "${{ secrets.AZURE_WEBAPP_NAME }}" ] || [ -z "${{ secrets.AZURE_RESOURCE_GROUP }}" ]; then
-            echo "AZURE_WEBAPP_NAME and AZURE_RESOURCE_GROUP secrets are required for deployment." >> build-devops.log || true
-            exit 0
-          fi
-          AZURE_WEBAPP_PLAN=${{ secrets.AZURE_WEBAPP_PLAN }}
-          if [ -z "$AZURE_WEBAPP_PLAN" ]; then AZURE_WEBAPP_PLAN="${{ secrets.AZURE_WEBAPP_NAME }}-plan"; fi
-          az group create --name "${{ secrets.AZURE_RESOURCE_GROUP }}" --location "${{ secrets.AZURE_LOCATION || 'eastus' }}" >> build-devops.log 2>&1 || true
-          az appservice plan show --name "$AZURE_WEBAPP_PLAN" --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" >> build-devops.log 2>&1 || az appservice plan create --name "$AZURE_WEBAPP_PLAN" --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" --is-linux --sku B1 >> build-devops.log 2>&1 || true
-          az webapp show --name "${{ secrets.AZURE_WEBAPP_NAME }}" --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" >> build-devops.log 2>&1 || az webapp create --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" --plan "$AZURE_WEBAPP_PLAN" --name "${{ secrets.AZURE_WEBAPP_NAME }}" --runtime "JAVA|17-java17" >> build-devops.log 2>&1 || true
+          # create container if missing (no-op if already exists)
+          az storage container create \
+            --name "$AZURE_STORAGE_CONTAINER" \
+            --connection-string "$AZURE_STORAGE_CONNECTION_STRING" || true
 
-      - name: Deploy JAR to App Service
+      - name: Upload devops log to Azure Blob
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
         run: |
-          set -e
-          echo "\n--- Deploy JAR ---" >> build-devops.log || true
-          JAR=$(ls target/*.jar | head -n1 || true)
-          if [ -z "$JAR" ]; then
-            echo "Jar not found in target/ - skipping deploy" >> build-devops.log || true
-          else
-            az webapp deploy --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" --name "${{ secrets.AZURE_WEBAPP_NAME }}" --src-path "$JAR" --type jar --restart true >> build-devops.log 2>&1 || true
-          fi
-
-      - name: Upload devops log to Azure Blob (always)
-        if: always()
-        run: |
-          set -e
-          echo "\n--- Uploading build-devops.log to Azure Blob ---" >> build-devops.log || true
-          if [ -z "${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}" ] || [ -z "${{ secrets.AZURE_STORAGE_CONTAINER }}" ]; then
-            echo "Storage secrets missing; cannot upload log." >> build-devops.log || true
-            exit 0
-          fi
-          az storage container create --name "${{ secrets.AZURE_STORAGE_CONTAINER }}" --connection-string "${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}" >> build-devops.log 2>&1 || true
-          az storage blob upload --connection-string "${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}" --container-name "${{ secrets.AZURE_STORAGE_CONTAINER }}" --name "logs/${{ github.workflow }}-${{ github.run_id }}/build-devops.log" --file build-devops.log --overwrite >> build-devops.log 2>&1 || true
-
+          az storage blob upload \
+            --connection-string "$AZURE_STORAGE_CONNECTION_STRING" \
+            --container-name "$AZURE_STORAGE_CONTAINER" \
+            --name "logs/${{ github.workflow }}-${{ github.run_id }}/build-devops.log" \
+            --file build-devops.log \
+            --overwrite
