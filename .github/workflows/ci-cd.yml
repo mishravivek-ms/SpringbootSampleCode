@@ -88,10 +88,8 @@ jobs:
           name: java-app
           path: ./artifacts
 
-      - name: Azure Login (optional)
-        uses: azure/login@v1
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+    # Azure login removed for this upload job to avoid tenant Conditional Access blocking
+    # Upload uses AZURE_STORAGE_CONNECTION_STRING to authenticate directly to the storage account.
 
       - name: Ensure Azure Blob container exists
         env:
