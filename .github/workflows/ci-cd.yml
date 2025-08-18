@@ -58,11 +58,63 @@ jobs:
           name: build-devops-log
           path: build-devops.log
 
-      - name: Azure Login (for deployment)
-        id: azure_login
+      - name: Try Azure OIDC login (recommended)
+        id: azure_oidc_login
         uses: azure/login@v1
+        continue-on-error: true
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+
+      - name: Detect Azure login failure and append to log
+        if: ${{ always() }}
+        run: |
+          # If az account show fails, write a clear message to build-devops.log so it's uploaded
+          if ! az account show >/dev/null 2>&1; then
+            echo "--- AZURE LOGIN FAILED ---" >> build-devops.log || true
+            echo "Azure login failed. This is commonly caused by Conditional Access policies blocking service principal credential flows (AADSTS53003) or misconfigured credentials." >> build-devops.log || true
+            echo "Error details: (check Actions run logs for step 'Try Azure OIDC login' for the provider error message)" >> build-devops.log || true
+            echo "If your tenant blocks non-interactive credential flows, configure federated credentials (OIDC) for your GitHub Actions app registration. See: https://github.com/azure/login#configure-a-service-principal-with-a-federated-credential-to-use-oidc-based-authentication" >> build-devops.log || true
+            echo "Workflow run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> build-devops.log || true
+          else
+            echo "Azure login succeeded." >> build-devops.log || true
+          fi
+
+      - name: Ensure Azure CLI and jq installed (for manual login fallback)
+        run: |
+          set -e
+          echo "Ensuring azure-cli and jq are available"
+          sudo apt-get update && sudo apt-get install -y ca-certificates curl apt-transport-https lsb-release gnupg jq
+          curl -sL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg
+          sudo install -o root -g root -m 644 microsoft.gpg /etc/apt/trusted.gpg.d/ || true
+          CODENAME="$(lsb_release -cs)"
+          echo "deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli/ $CODENAME main" | sudo tee /etc/apt/sources.list.d/azure-cli.list
+          sudo apt-get update && sudo apt-get install -y azure-cli || true
+
+      - name: Fallback: Manual Azure login and capture errors to log
+        continue-on-error: true
+        run: |
+          set -e
+          echo "Checking if Azure login is already present..."
+          if az account show >/dev/null 2>&1; then
+            echo "Azure already logged in; skipping manual login." >> build-devops.log || true
+            exit 0
+          fi
+          echo "Attempting manual az login using service principal from AZURE_CREDENTIALS (output appended to build-devops.log)"
+          AZURE_CREDENTIALS='${{ secrets.AZURE_CREDENTIALS }}'
+          if [ -z "$AZURE_CREDENTIALS" ]; then
+            echo "No AZURE_CREDENTIALS secret found; skipping manual login." >> build-devops.log || true
+            exit 0
+          fi
+          # write creds to temp file (kept on runner only) and extract fields safely
+          printf '%s' "$AZURE_CREDENTIALS" > /tmp/azure_creds.json
+          clientId=$(jq -r .clientId /tmp/azure_creds.json)
+          clientSecret=$(jq -r .clientSecret /tmp/azure_creds.json)
+          tenantId=$(jq -r .tenantId /tmp/azure_creds.json)
+          # Attempt login and append any errors to the build log
+          az login --service-principal -u "$clientId" -p "$clientSecret" --tenant "$tenantId" 2>&1 | tee -a build-devops.log || true
+          # cleanup
+          shred -u /tmp/azure_creds.json || rm -f /tmp/azure_creds.json || true
 
       - name: Prepare App Service (create plan + webapp if missing)
         # if azure login fails this will be skipped; deployment will then fail but log upload still runs
