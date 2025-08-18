@@ -1,0 +1,73 @@
+name: CI/CD - Build, Test, Upload Log to Azure
+
+on:
+  push:
+    branches: [ 'master', 'main' ]
+  pull_request:
+    branches: [ 'master', 'main' ]
+  workflow_dispatch:
+
+env:
+  # Optional default. You can also set this directly in repository Secrets.
+  AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Cache Maven repository
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Build and test (capture log)
+        # The log will be created as `build-devops.log` in the workspace
+        run: |
+          mvn -B clean verify | tee build-devops.log
+
+      - name: Upload build log as artifact (optional)
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-devops-log
+          path: build-devops.log
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Ensure Azure Blob container exists
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+        run: |
+          # create container if missing (no-op if already exists)
+          az storage container create \
+            --name "$AZURE_STORAGE_CONTAINER" \
+            --connection-string "$AZURE_STORAGE_CONNECTION_STRING" || true
+
+      - name: Upload devops log to Azure Blob
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+        run: |
+          az storage blob upload \
+            --connection-string "$AZURE_STORAGE_CONNECTION_STRING" \
+            --container-name "$AZURE_STORAGE_CONTAINER" \
+            --name "logs/${{ github.workflow }}-${{ github.run_id }}/build-devops.log" \
+            --file build-devops.log \
+            --overwrite
