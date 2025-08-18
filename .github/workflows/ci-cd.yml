@@ -71,7 +71,7 @@ jobs:
           app-name: 'deloittepocai'
           slot-name: 'Production'
           package: '*.jar'
-          
+
   upload-log:
     runs-on: ubuntu-latest
     needs: deploy
@@ -82,7 +82,13 @@ jobs:
           name: build-devops-log
           path: build-devops.log
 
-      - name: Azure Login
+      - name: Download build artifact (from build job)
+        uses: actions/download-artifact@v4
+        with:
+          name: java-app
+          path: ./artifacts
+
+      - name: Azure Login (optional)
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
@@ -92,19 +98,37 @@ jobs:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
         run: |
-          # create container if missing (no-op if already exists)
-          az storage container create \
-            --name "$AZURE_STORAGE_CONTAINER" \
-            --connection-string "$AZURE_STORAGE_CONNECTION_STRING" || true
+          az storage container create --name "$AZURE_STORAGE_CONTAINER" --connection-string "$AZURE_STORAGE_CONNECTION_STRING" || true
 
-      - name: Upload devops log to Azure Blob
+      - name: Upload artifacts and logs to Azure Blob (always)
+        if: always()
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
         run: |
-          az storage blob upload \
-            --connection-string "$AZURE_STORAGE_CONNECTION_STRING" \
-            --container-name "$AZURE_STORAGE_CONTAINER" \
-            --name "logs/${{ github.workflow }}-${{ github.run_id }}/build-devops.log" \
-            --file build-devops.log \
-            --overwrite
+          set -e
+          echo "Uploading artifacts and logs to container: $AZURE_STORAGE_CONTAINER"
+
+          # batch-upload downloaded artifacts folder (if present)
+          if [ -d artifacts ]; then
+            az storage blob upload-batch --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --destination "$AZURE_STORAGE_CONTAINER" --source artifacts --overwrite || true
+          fi
+
+          # batch-upload target/ if it exists
+          if [ -d target ]; then
+            az storage blob upload-batch --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --destination "$AZURE_STORAGE_CONTAINER" --source target --overwrite || true
+          fi
+
+          # upload any jar files to a run-specific prefix
+          PREFIX="artifacts/${{ github.run_id }}"
+          for j in artifacts/*.jar target/*.jar ./*.jar; do
+            [ -f "$j" ] || continue
+            az storage blob upload --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --container-name "$AZURE_STORAGE_CONTAINER" --name "$PREFIX/$(basename "$j")" --file "$j" --overwrite || true
+          done
+
+          # upload root-level log files under a pipeline-logs folder
+          LOG_PREFIX="pipeline-logs/${{ github.run_id }}"
+          for f in ./*.log build-*.log build-devops.log; do
+            [ -f "$f" ] || continue
+            az storage blob upload --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --container-name "$AZURE_STORAGE_CONTAINER" --name "$LOG_PREFIX/$(basename "$f")" --file "$f" --overwrite || true
+          done
