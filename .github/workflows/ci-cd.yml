@@ -8,8 +8,16 @@ on:
   workflow_dispatch:
 
 env:
-  # Optional default. You can also set this directly in repository Secrets.
-  AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_WEBAPP_NAME: ${{ secrets.AZURE_WEBAPP_NAME }}
+      AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+      AZURE_WEBAPP_PLAN: ${{ secrets.AZURE_WEBAPP_PLAN }}
+      AZURE_LOCATION: ${{ secrets.AZURE_LOCATION }}
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+      AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+  
 
 jobs:
   build:
@@ -38,6 +46,15 @@ jobs:
         # The log will be created as `build-devops.log` in the workspace
         run: |
           mvn -B clean verify | tee build-devops.log
+          
+    # Deploy to Azure Web App
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: 'deloittepocai'   # 👈 Replace with App Service name
+          slot-name: 'production'               # or staging slot
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: target/*.jar
 
       - name: Upload build log as artifact (optional)
         uses: actions/upload-artifact@v4
