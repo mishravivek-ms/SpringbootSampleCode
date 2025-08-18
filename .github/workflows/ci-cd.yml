@@ -132,16 +132,19 @@ jobs:
           echo "Uploading log files to container: $AZURE_STORAGE_CONTAINER"
 
           LOG_PREFIX="pipeline-logs/${{ github.run_id }}"
+          # UTC timestamp to make each upload unique (ISO-like compact)
+          TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
 
           # upload build and deploy logs and any other root .log files
           for f in build-devops.log deploy-devops.log ./*.log build-*.log; do
             [ -f "$f" ] || continue
-            echo "Uploading $f -> $LOG_PREFIX/$(basename "$f")"
-            az storage blob upload --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --container-name "$AZURE_STORAGE_CONTAINER" --name "$LOG_PREFIX/$(basename "$f")" --file "$f" --overwrite || true
+            BASENAME=$(basename "$f")
+            echo "Uploading $f -> $LOG_PREFIX/${BASENAME}.${TIMESTAMP}"
+            az storage blob upload --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --container-name "$AZURE_STORAGE_CONTAINER" --name "$LOG_PREFIX/${BASENAME}.${TIMESTAMP}" --file "$f" --overwrite || true
           done
 
-          # upload the GitHub Actions run logs zip if present
+          # upload the GitHub Actions run logs zip if present (with timestamp)
           if [ -f actions-run-logs.zip ]; then
-            echo "Uploading Actions run logs zip -> $LOG_PREFIX/actions-run-logs.zip"
-            az storage blob upload --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --container-name "$AZURE_STORAGE_CONTAINER" --name "$LOG_PREFIX/actions-run-logs.zip" --file actions-run-logs.zip --overwrite || true
+            echo "Uploading Actions run logs zip -> $LOG_PREFIX/actions-run-logs.zip.${TIMESTAMP}"
+            az storage blob upload --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --container-name "$AZURE_STORAGE_CONTAINER" --name "$LOG_PREFIX/actions-run-logs.zip.${TIMESTAMP}" --file actions-run-logs.zip --overwrite || true
           fi
