@@ -1,4 +1,4 @@
-name: CI/CD - Build, Test, Upload Log to Azure
+name: CI/CD - Build, Test, Deploy to App Service, Upload Log to Azure
 
 on:
   push:
@@ -7,12 +7,26 @@ on:
     branches: [ 'master', 'main' ]
   workflow_dispatch:
 
+# Required repo secrets (set these in repo Settings → Secrets):
+# - AZURE_CREDENTIALS           : service principal SDK auth JSON (for azure/login)
+# - AZURE_STORAGE_CONNECTION_STRING : storage account connection string (used to upload logs)
+# - AZURE_STORAGE_CONTAINER     : container name to store logs (e.g. 'poc')
+# - AZURE_WEBAPP_NAME           : App Service name to deploy to
+# - AZURE_RESOURCE_GROUP        : Resource group where the App Service lives or will be created
+# Optional secrets:
+# - AZURE_WEBAPP_PLAN          : App Service plan name (will be created if missing)
+# - AZURE_LOCATION             : Azure location (default: eastus)
+
 env:
-  # Optional default. You can also set this directly in repository Secrets.
   AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+  AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+  AZURE_WEBAPP_NAME: ${{ secrets.AZURE_WEBAPP_NAME }}
+  AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+  AZURE_WEBAPP_PLAN: ${{ secrets.AZURE_WEBAPP_PLAN }}
+  AZURE_LOCATION: ${{ secrets.AZURE_LOCATION }}
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
@@ -35,7 +49,6 @@ jobs:
             ${{ runner.os }}-maven-
 
       - name: Build and test (capture log)
-        # The log will be created as `build-devops.log` in the workspace
         run: |
           mvn -B clean verify | tee build-devops.log
 
@@ -45,29 +58,68 @@ jobs:
           name: build-devops-log
           path: build-devops.log
 
-      - name: Azure Login
+      - name: Azure Login (for deployment)
+        id: azure_login
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Ensure Azure Blob container exists
+      - name: Prepare App Service (create plan + webapp if missing)
+        # if azure login fails this will be skipped; deployment will then fail but log upload still runs
         env:
-          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
-          AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+          AZURE_WEBAPP_NAME: ${{ env.AZURE_WEBAPP_NAME }}
+          AZURE_RESOURCE_GROUP: ${{ env.AZURE_RESOURCE_GROUP }}
+          AZURE_WEBAPP_PLAN: ${{ env.AZURE_WEBAPP_PLAN }}
+          AZURE_LOCATION: ${{ env.AZURE_LOCATION || 'eastus' }}
         run: |
-          # create container if missing (no-op if already exists)
-          az storage container create \
-            --name "$AZURE_STORAGE_CONTAINER" \
-            --connection-string "$AZURE_STORAGE_CONNECTION_STRING" || true
+          set -e
+          if [ -z "$AZURE_WEBAPP_NAME" ] || [ -z "$AZURE_RESOURCE_GROUP" ]; then
+            echo "AZURE_WEBAPP_NAME and AZURE_RESOURCE_GROUP must be set as repo secrets to deploy." >&2
+            exit 1
+          fi
+          # default plan name
+          if [ -z "$AZURE_WEBAPP_PLAN" ]; then
+            AZURE_WEBAPP_PLAN="${AZURE_WEBAPP_NAME}-plan"
+            echo "No plan provided. Using $AZURE_WEBAPP_PLAN"
+          fi
+          # create resource group if missing
+          az group create --name "$AZURE_RESOURCE_GROUP" --location "$AZURE_LOCATION" || true
+          # create app service plan (Linux, B1) if missing
+          az appservice plan show --name "$AZURE_WEBAPP_PLAN" --resource-group "$AZURE_RESOURCE_GROUP" >/dev/null 2>&1 || \
+            az appservice plan create --name "$AZURE_WEBAPP_PLAN" --resource-group "$AZURE_RESOURCE_GROUP" --is-linux --sku B1 --output none
+          # create webapp (Java 17) if missing
+          az webapp show --name "$AZURE_WEBAPP_NAME" --resource-group "$AZURE_RESOURCE_GROUP" >/dev/null 2>&1 || \
+            az webapp create --resource-group "$AZURE_RESOURCE_GROUP" --plan "$AZURE_WEBAPP_PLAN" --name "$AZURE_WEBAPP_NAME" --runtime "JAVA|17-java17" --output none
 
-      - name: Upload devops log to Azure Blob
+      - name: Deploy JAR to App Service
+        env:
+          AZURE_WEBAPP_NAME: ${{ env.AZURE_WEBAPP_NAME }}
+          AZURE_RESOURCE_GROUP: ${{ env.AZURE_RESOURCE_GROUP }}
+        run: |
+          set -e
+          JAR=$(ls target/*.jar | head -n1)
+          if [ -z "$JAR" ]; then echo "Jar not found in target/" >&2; exit 1; fi
+          echo "Deploying $JAR to webapp $AZURE_WEBAPP_NAME..."
+          az webapp deploy --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_WEBAPP_NAME" --src-path "$JAR" --type jar --restart true
+
+      - name: Upload devops log to Azure Blob (always)
+        if: always()
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
         run: |
+          set -e
+          if [ -z "$AZURE_STORAGE_CONNECTION_STRING" ] || [ -z "$AZURE_STORAGE_CONTAINER" ]; then
+            echo "AZURE_STORAGE_CONNECTION_STRING and AZURE_STORAGE_CONTAINER must be provided as secrets for log upload." >&2
+            exit 1
+          fi
+          # ensure container exists
+          az storage container create --name "$AZURE_STORAGE_CONTAINER" --connection-string "$AZURE_STORAGE_CONNECTION_STRING" || true
+          # upload log (overwrite)
           az storage blob upload \
             --connection-string "$AZURE_STORAGE_CONNECTION_STRING" \
             --container-name "$AZURE_STORAGE_CONTAINER" \
             --name "logs/${{ github.workflow }}-${{ github.run_id }}/build-devops.log" \
             --file build-devops.log \
-            --overwrite
+            --overwrite || true
+
