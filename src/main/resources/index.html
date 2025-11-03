@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Pay Invoice</title>
+    <meta name="viewport" content="width=350, initial-scale=1">
+    <style>
+        body {
+            background: #f5f7fa;
+            font-family: 'Segoe UI', Arial, sans-serif;
+        }
+        .container {
+            width: 350px;
+            margin: 30px auto;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            border: 1px solid #e0e0e0;
+            overflow: hidden;
+        }
+        .header {
+            background: #f1f4f7;
+            padding: 24px 0 16px 0;
+            text-align: center;
+            font-size: 1.5em;
+            color: #6b6b6b;
+            font-weight: 500;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .content {
+            padding: 24px 24px 16px 24px;
+        }
+        .card-logos {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 18px;
+        }
+        .card-logos img {
+            height: 28px;
+        }
+        .amount-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .amount-label {
+            flex: 1;
+            color: #444;
+            font-size: 1em;
+        }
+        .amount-value {
+            font-size: 1.4em;
+            font-weight: 600;
+            color: #444;
+            margin-right: 10px;
+        }
+        .edit-btn {
+            background: #fff;
+            border: 1px solid #bdbdbd;
+            border-radius: 4px;
+            padding: 4px 14px;
+            font-size: 1em;
+            cursor: pointer;
+            color: #444;
+            transition: background 0.2s;
+        }
+        .edit-btn:hover {
+            background: #f1f1f1;
+        }
+        .form-group {
+            margin-bottom: 14px;
+        }
+        .form-label {
+            display: block;
+            font-size: 0.98em;
+            color: #444;
+            margin-bottom: 4px;
+        }
+        .form-input {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #bdbdbd;
+            border-radius: 4px;
+            font-size: 1em;
+            background: #fafbfc;
+            margin-bottom: 0;
+        }
+        .form-row {
+            display: flex;
+            gap: 8px;
+        }
+        .form-row .form-input {
+            flex: 1;
+        }
+        .info-icon {
+            font-size: 1.1em;
+            color: #bdbdbd;
+            margin-left: 4px;
+            vertical-align: middle;
+            cursor: pointer;
+        }
+        .pay-btn {
+            width: 100%;
+            background: #2ad1c7;
+            color: #fff;
+            font-size: 1.15em;
+            font-weight: 500;
+            border: none;
+            border-radius: 4px;
+            padding: 12px 0;
+            margin-top: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+        .pay-btn:before {
+            content: '';
+            display: inline-block;
+            background: url('https://img.icons8.com/ios-filled/24/ffffff/lock-2.png') no-repeat center center;
+            width: 20px;
+            height: 20px;
+            margin-right: 8px;
+        }
+        .pay-btn:hover {
+            background: #1bb3a9;
+        }
+        .error {
+            color: #d32f2f;
+            font-size: 0.92em;
+            margin-top: 2px;
+            margin-bottom: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">Pay Invoice</div>
+        <div class="content">
+            <div class="card-logos">
+                <img src="https://img.icons8.com/color/48/000000/visa.png" alt="Visa">
+                <img src="https://img.icons8.com/color/48/000000/mastercard-logo.png" alt="Mastercard">
+                <img src="https://img.icons8.com/color/48/000000/amex.png" alt="American Express">
+                <img src="https://img.icons8.com/color/48/000000/discover.png" alt="Discover">
+            </div>
+            <div class="amount-row">
+                <div>
+                    <div class="amount-label">Payment amount</div>
+                    <div class="amount-value">$500.00</div>
+                </div>
+                <button class="edit-btn" type="button">Edit</button>
+            </div>
+            <form id="paymentForm" novalidate>
+                <div class="form-group">
+                    <label class="form-label" for="name">Name on card</label>
+                    <input class="form-input" type="text" id="name" name="name" autocomplete="cc-name" required pattern="^[A-Za-z\s\-\.']+$" maxlength="40" inputmode="text">
+                    <div class="error" id="nameError"></div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="cardnumber">Card number</label>
+                    <input class="form-input" type="text" id="cardnumber" name="cardnumber" maxlength="19" autocomplete="cc-number" required pattern="^\d{16,19}$" inputmode="numeric" placeholder="1234 5678 9012 3456">
+                    <div class="error" id="cardError"></div>
+                </div>
+                <div class="form-row form-group">
+                    <div style="flex:2">
+                        <label class="form-label" for="expiry">Expiry date</label>
+                        <input class="form-input" type="text" id="expiry" name="expiry" placeholder="MM / YY" maxlength="7" autocomplete="cc-exp" required pattern="^(0[1-9]|1[0-2])\s*\/\s*\d{2}$" inputmode="numeric">
+                        <div class="error" id="expiryError"></div>
+                    </div>
+                    <div style="flex:1">
+                        <label class="form-label" for="cvc">Security code
+                            <span class="info-icon" title="3 or 4 digit code on your card">&#9432;</span>
+                        </label>
+                        <input class="form-input" type="text" id="cvc" name="cvc" maxlength="4" autocomplete="cc-csc" required pattern="^\d{3,4}$" inputmode="numeric">
+                        <div class="error" id="cvcError"></div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="zip">ZIP/Postal code
+                        <span class="info-icon" title="Billing ZIP or Postal code">&#9432;</span>
+                    </label>
+                    <input class="form-input" type="text" id="zip" name="zip" autocomplete="postal-code" required pattern="^[A-Za-z0-9\s\-]{3,10}$" maxlength="10">
+                    <div class="error" id="zipError"></div>
+                </div>
+                <button type="submit" class="pay-btn">Pay $500.00</button>
+            </form>
+        </div>
+    </div>
+    <script>
+        // Prevent digits in Name on Card
+        document.getElementById('name').addEventListener('input', function(e) {
+            this.value = this.value.replace(/[^A-Za-z\s\-\.']/g, '');
+        });
+
+        // Card number: allow only digits and spaces, auto-format
+        document.getElementById('cardnumber').addEventListener('input', function(e) {
+            let val = this.value.replace(/\D/g, '').slice(0,19);
+            let formatted = val.replace(/(.{4})/g, '$1 ').trim();
+            this.value = formatted;
+        });
+
+        // Expiry: allow only MM / YY
+        document.getElementById('expiry').addEventListener('input', function(e) {
+            let val = this.value.replace(/\D/g, '');
+            if (val.length > 4) val = val.slice(0,4);
+            if (val.length > 2) {
+                val = val.slice(0,2) + ' / ' + val.slice(2);
+            }
+            this.value = val;
+        });
+
+        // CVC: only digits, max 4
+        document.getElementById('cvc').addEventListener('input', function(e) {
+            this.value = this.value.replace(/\D/g, '').slice(0,4);
+        });
+
+        // ZIP: allow alphanumeric, space, dash
+        document.getElementById('zip').addEventListener('input', function(e) {
+            this.value = this.value.replace(/[^A-Za-z0-9\s\-]/g, '').slice(0,10);
+        });
+
+        // Form validation
+        document.getElementById('paymentForm').addEventListener('submit', function(e) {
+            let valid = true;
+
+            // Name validation
+            const name = document.getElementById('name');
+            const nameError = document.getElementById('nameError');
+            if (!name.value.trim()) {
+                nameError.textContent = "Name is required.";
+                valid = false;
+            } else if (!/^[A-Za-z\s\-\.']+$/.test(name.value)) {
+                nameError.textContent = "Only letters, spaces, and - . ' allowed.";
+                valid = false;
+            } else {
+                nameError.textContent = "";
+            }
+
+            // Card number validation
+            const card = document.getElementById('cardnumber');
+            const cardError = document.getElementById('cardError');
+            const cardVal = card.value.replace(/\s/g, '');
+            if (!cardVal) {
+                cardError.textContent = "Card number is required.";
+                valid = false;
+            } else if (!/^\d{16,19}$/.test(cardVal)) {
+                cardError.textContent = "Enter a valid card number (16-19 digits).";
+                valid = false;
+            } else {
+                cardError.textContent = "";
+            }
+
+            // Expiry validation
+            const expiry = document.getElementById('expiry');
+            const expiryError = document.getElementById('expiryError');
+            if (!expiry.value.trim()) {
+                expiryError.textContent = "Expiry date is required.";
+                valid = false;
+            } else if (!/^(0[1-9]|1[0-2])\s*\/\s*\d{2}$/.test(expiry.value)) {
+                expiryError.textContent = "Format MM / YY.";
+                valid = false;
+            } else {
+                expiryError.textContent = "";
+            }
+
+            // CVC validation
+            const cvc = document.getElementById('cvc');
+            const cvcError = document.getElementById('cvcError');
+            if (!cvc.value.trim()) {
+                cvcError.textContent = "Security code required.";
+                valid = false;
+            } else if (!/^\d{3,4}$/.test(cvc.value)) {
+                cvcError.textContent = "3 or 4 digits.";
+                valid = false;
+            } else {
+                cvcError.textContent = "";
+            }
+
+            // ZIP validation
+            const zip = document.getElementById('zip');
+            const zipError = document.getElementById('zipError');
+            if (!zip.value.trim()) {
+                zipError.textContent = "ZIP/Postal code required.";
+                valid = false;
+            } else if (!/^[A-Za-z0-9\s\-]{3,10}$/.test(zip.value)) {
+                zipError.textContent = "3-10 letters, numbers, space or dash.";
+                valid = false;
+            } else {
+                zipError.textContent = "";
+            }
+
+            if (!valid) {
+                e.preventDefault();
+            }
+        });
+    </script>
+</body>
+</html>

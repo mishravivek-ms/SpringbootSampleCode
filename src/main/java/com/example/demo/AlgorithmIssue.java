@@ -1,13 +1,10 @@
 package com.example.demo;
 
-import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 
-public class AlgorithmIssue {
-    public static void main(String[] args) {
-        int[] numbers = {3, 7, 9, 2, 5,8};
+public class AlgorithmIssue {public static void main(String[] args) {
+        int[] numbers = {3, 7, 9, 2, 5,1,8};
         int target = 10;
 
         System.out.println("Target: " + target);
@@ -17,33 +14,26 @@ public class AlgorithmIssue {
         }
         System.out.println();
 
-        findAllPairsOptimized(numbers, target);
+        findPair(numbers, target);
     }
 
-     public static List<int[]> findAllPairsOptimized(int[] numbers, int target) {
-    List<int[]> result = new ArrayList<>();
-    
-    if (numbers == null || numbers.length < 2) {
-        return result;
-    }
-    
+    public static void findPair(int[] numbers, int target) {
     Set<Integer> seen = new HashSet<>();
-    Set<String> uniquePairs = new HashSet<>();
-    
-    for (int current : numbers) {
-        int complement = target - current;
-        
+    boolean pairFound = false;
+
+    for (int number : numbers) {
+        int complement = target - number;
         if (seen.contains(complement)) {
-            // Create a normalized key to avoid duplicate pairs
-            String pairKey = Math.min(current, complement) + "," + Math.max(current, complement);
-            
-            if (uniquePairs.add(pairKey)) {
-                result.add(new int[]{Math.min(current, complement), Math.max(current, complement)});
-            }
+            System.out.println("Pair found: " + complement + " + " + number + " = " + target);
+            pairFound = true;
+            // If you want only one pair, you can return here.
         }
-        seen.add(current);
+        seen.add(number);
     }
-    
-    return result;
+
+    if (!pairFound) {
+        System.out.println("No pair found with the given target.");
+    }
 }
+
 }

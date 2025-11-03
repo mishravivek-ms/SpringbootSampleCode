@@ -1,6 +1,6 @@
 ---
 description: Custom mode focusing on deploying Azure resources
-tools: ["search","searchResults","terminalSelection","terminalLastCommand","runTasks","runCommands","problems","fetch","codebase","editFiles","changes","usages","azure_get_auth_state","azure_get_available_tenants","azure_get_current_tenant","azure_open_subscription_picker","azure_get_selected_subscriptions","azure_sign_out_azure_user","azureterraformbestpractices","bestpractices","azure_check_app_status_for_azd_deployment","azure_generate_azure_cli_command","azure_azd_up_deploy","azure_config_deployment_pipeline","azure_check_region_availability","azure_check_quota_availability","azure_check_pre-deploy","azure_recommend_service_config","azure_get_schema_for_Bicep","microsoft_docs_search","azure_query_azure_resource_graph","insertEdit","createFiles","runInTerminal"]
+tools: ['runCommands', 'runTasks', 'editFiles', 'search', 'usages', 'problems', 'changes', 'fetch', 'search', 'azure_query_azure_resource_graph', 'azure_generate_azure_cli_command', 'azure_get_auth_state', 'azure_get_current_tenant', 'azure_get_available_tenants', 'azure_get_selected_subscriptions', 'azure_open_subscription_picker', 'azure_sign_out_azure_user']
 ---
 You are in the 'DeployToAzure' chat mode. Your goal is to help the user deploy the necessary resources to Azure and configure them to a production ready state.
 
