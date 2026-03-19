@@ -1,0 +1,74 @@
+name: Create UI/UX Issue on PR Merge
+
+# Trigger only when a pull request targeting master is closed.
+# The job itself will check that the PR was actually merged (not just closed).
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - master
+
+jobs:
+  create-uiux-issue:
+    # Only run this job when the PR was genuinely merged, not merely closed.
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    permissions:
+      issues: write   # Required to create issues
+      contents: read  # Required to read repo contents
+
+    steps:
+      - name: Create UI/UX tracking issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber  = context.payload.pull_request.number;
+            const prTitle   = context.payload.pull_request.title;
+            const prUrl     = context.payload.pull_request.html_url;
+            const prAuthor  = context.payload.pull_request.user.login;
+
+            const issueTitle = `UI/UX Review: ${prTitle} (#${prNumber})`;
+            const issueBody  = `## UI/UX Review Required\n\n` +
+              `A pull request has been merged that may require a UI/UX review.\n\n` +
+              `**PR:** [#${prNumber} - ${prTitle}](${prUrl})\n` +
+              `**Author:** @${prAuthor}\n\n` +
+              `Please review the UI/UX changes introduced by this PR and ensure they meet our design guidelines.`;
+
+            // Determine which labels to apply by fetching only labels that
+            // already exist in the repo.  This prevents a 422 Validation
+            // Failed error when a label has not been created yet.
+            const desiredLabels = ['ui/ux', 'copilot'];
+            const existingLabels = [];
+
+            for (const label of desiredLabels) {
+              try {
+                await github.rest.issues.getLabel({
+                  owner: context.repo.owner,
+                  repo:  context.repo.repo,
+                  name:  label,
+                });
+                existingLabels.push(label);
+              } catch (err) {
+                // Label does not exist — skip it rather than letting the
+                // issue-create call fail with 422 Validation Failed.
+                if (err.status === 404) {
+                  core.warning(`Label "${label}" not found in repo — skipping.`);
+                } else {
+                  throw err;
+                }
+              }
+            }
+
+            // 'assignees' is intentionally omitted: assigning to 'copilot'
+            // (or any user who is not a repo collaborator) causes a
+            // 422 Validation Failed error and aborts the workflow.
+            const { data: issue } = await github.rest.issues.create({
+              owner:  context.repo.owner,
+              repo:   context.repo.repo,
+              title:  issueTitle,
+              body:   issueBody,
+              labels: existingLabels,
+            });
+
+            core.notice(`Created issue #${issue.number}: ${issue.html_url}`);
